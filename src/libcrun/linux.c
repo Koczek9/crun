@@ -55,6 +55,7 @@
 #include <sys/personality.h>
 #include <net/if.h>
 #include <sys/xattr.h>
+#include <mntent.h>
 
 #include <yajl/yajl_tree.h>
 #include <yajl/yajl_gen.h>
@@ -1698,8 +1699,60 @@ do_masked_or_readonly_path (libcrun_container_t *container, const char *rel_path
       char source_buffer[64];
       sprintf (source_buffer, "/proc/self/fd/%d", pathfd);
 
+      // get mount flags from parent directory
+      FILE *mount_info;
+      struct mntent *me;
+      mount_info = setmntent("/proc/mounts", "r");
+      int best_fit_length = 0;
+      char *options = 0;
+      while (me = getmntent(mount_info))
+      {
+        // mount dir includes '/' so skip it
+        if(!strcmp(rel_path, me->mnt_dir + 1))
+        {
+          //Found exact match
+          free(options);
+          options = malloc(strlen(me->mnt_opts) + 1);
+          if (options)
+          {
+            strcpy(options,me->mnt_opts);
+          }
+          else
+          {
+            printf("Failed to allocate memory");
+          }
+          break;
+        }
+        else
+        {
+          // mount dir includes '/' so skip it
+          if(strstr(rel_path, me->mnt_dir + 1))
+          {
+            // Found partial match
+            if (best_fit_length < strlen(me->mnt_dir))
+            {
+              best_fit_length = strlen(me->mnt_dir);
+              free(options);
+              options = malloc(strlen(me->mnt_opts) + 1);
+              if (options)
+              {
+                strcpy(options,me->mnt_opts);
+              }
+              else
+              {
+                printf("Failed to allocate memory");
+              }
+            }
+          }
+        }
+      }
+      endmntent(mount_info);
+
       ret = do_mount (container, source_buffer, pathfd, rel_path, NULL, MS_BIND | MS_PRIVATE | MS_RDONLY | MS_REC, NULL,
                       LABEL_NONE, err);
+
+      free(options);
+
       if (UNLIKELY (ret < 0))
         return ret;
     }
